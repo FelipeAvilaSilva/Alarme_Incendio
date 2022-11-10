@@ -1,4 +1,4 @@
-/*
+/*v2
  * HelTec Automation(TM) LoRaWAN 1.0.2 OTAA example use OTAA, CLASS A
  *
  * Function summary:
@@ -23,46 +23,80 @@
  *
  *this project also release in GitHub:
  *https://github.com/HelTecAutomation/ESP32_LoRaWAN
- *
- *
- * To use this on Thethingsnetwork.org add the following Payload Formatter for this device
 */
 
-#include <ESP32_LoRaWAN.h>
+//INCLUDE
 #include "Arduino.h"
 #include "OTAA_OLED_KEYS.h"
+#include <ESP32_LoRaWAN.h>
+#include <DHT.h>
+#include <SPI.h>
+#include <Wire.h>
+
+//DEFINE
+#define DHTPIN 13//13
+
+//INIT
+DHT dht(DHTPIN, DHT11);
 
 
-static void prepareTxFrame( uint8_t port )
-{
-    // Prepare upstream data transmission at the next possible time.
-  
-	
-    appDataSize = 4;//AppDataSize max value is 64
-    // Format the data to bytes	
-    appData[0] = 1;
-    appData[1] = 0;
-    appData[2] = 0;
-    appData[3] = 1;	
+//GLOBAL
+float humidity, temperature;
+float humidity_new = -1, temperature_new = -1;
+
+//FLAG
+int d_dht = 0;
+//DHT11
+
+void readDHT(){  
+  humidity_new = dht.readHumidity();
+  delay(50);
+  temperature_new = dht.readTemperature();
+  delay(50);
+  if((isnan(humidity_new) || isnan(temperature_new) || humidity_new == -1 || temperature_new == -1 )){
+    Serial.println("Não foi possivel ler o sensor:"); 
+    d_dht = 0;     
+  }else if(humidity_new != humidity || temperature_new != temperature){
+    humidity = humidity_new;
+    temperature = temperature_new;
+    d_dht = 1;
+  }
 }
 
-// Add your initialization code here
-void setup()
-{
-  if(mcuStarted==0)
-  {
-    LoRaWAN.displayMcuInit();
-  }
+//ENVIA OS DADOS
+static void prepareTxFrame( uint8_t port ){
+
+  //int8 -> int16
+  uint16_t temp = (uint16_t) (temperature * 100);
+  uint16_t hum = (uint16_t) (humidity * 100);
+  
+  //envio
+    appDataSize = 10;                 //AppDataSize max value is 64
+    appData[0] = temp >> 8;
+    appData[1] = temp & 0xFF;
+    appData[2] = hum >> 8;
+    appData[3] = hum & 0xFF;
+    appData[4] = d_dht;
+}
+
+
+void setup(){  
   Serial.begin(115200);
-  while (!Serial);
-  SPI.begin(SCK,MISO,MOSI,SS);
+  Wire.begin(4, 15);
+  
+  //DHT INIT
+  dht.begin();
+
+  //DISPLAY INIT
+  if(mcuStarted == 0){  
+    LoRaWAN.displayMcuInit();
+  }    
   Mcu.init(SS,RST_LoRa,DIO0,DIO1,license);
-  deviceState = DEVICE_STATE_INIT;
+  deviceState = DEVICE_STATE_INIT;  
 }
 
 // The loop function is called in an endless loop
-void loop()
-{
+void loop(){
   switch( deviceState )
   {
     case DEVICE_STATE_INIT:
@@ -81,16 +115,17 @@ void loop()
     }
     case DEVICE_STATE_SEND:
     {
+      readDHT();
       LoRaWAN.displaySending();
-      prepareTxFrame( appPort );
-      LoRaWAN.send(loraWanClass);
+      prepareTxFrame( appPort );      
+      LoRaWAN.send(loraWanClass);      
       deviceState = DEVICE_STATE_CYCLE;
       break;
     }
     case DEVICE_STATE_CYCLE:
     {
       // Schedule next packet transmission
-      txDutyCycleTime = appTxDutyCycle + randr( -APP_TX_DUTYCYCLE_RND, APP_TX_DUTYCYCLE_RND );
+      txDutyCycleTime = appTxDutyCycle; + randr( -APP_TX_DUTYCYCLE_RND, APP_TX_DUTYCYCLE_RND );
       LoRaWAN.cycle(txDutyCycleTime);
       deviceState = DEVICE_STATE_SLEEP;
       break;
